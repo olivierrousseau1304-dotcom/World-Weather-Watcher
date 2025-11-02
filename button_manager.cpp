@@ -1,110 +1,119 @@
 #include "button_manager.h"
+#include "led_manager.h"
+#include "sd_logger.h"
 
-// --- Constantes locales ---
-const unsigned long HOLD_TIME = 5000; // temps maintien pour changement de mode
-
-// --- Variables internes (privées) ---
-static bool redButtonHeld = false;
-static unsigned long redButtonStart = 0;
-
-static bool greenButtonHeld = false;
-static unsigned long greenButtonStart = 0;
-
-// --- Mémoire du mode précédent (utile pour maintenance) ---
-static uint8_t previousMode = 0;
-
-// --- Initialisation des boutons ---
-void button_init() {
-    pinMode(BUTTON1_PIN, INPUT_PULLUP); // Bouton Vert
-    pinMode(BUTTON2_PIN, INPUT_PULLUP); // Bouton Rouge
+// ========================================
+// Init : input + pull-ups
+// ========================================
+void button_init()
+{
+    pinMode(BTN_VERT,  INPUT_PULLUP);
+    pinMode(BTN_ROUGE, INPUT_PULLUP);
 }
 
-// --- Fonctions simples ---
-bool button_red_pressed() {
-    return digitalRead(BUTTON2_PIN) == LOW;
+// ========================================
+// Pression simple (LOW = appuyé)
+// ========================================
+bool button_red_pressed()
+{
+    return (digitalRead(BTN_ROUGE) == LOW);
 }
 
-bool button_blue_pressed() {
-    return digitalRead(BUTTON1_PIN) == LOW;
+bool button_green_pressed()
+{
+    return (digitalRead(BTN_VERT) == LOW);
 }
 
-// --- Fonction principale de gestion des boutons ---
-void handle_buttons(uint8_t *currentMode) {
-    unsigned long now = millis();
+// ========================================
+// Détection appui long (5 s)
+// Non bloquant
+// ========================================
+bool button_is_long_press(uint8_t pin)
+{
+    static unsigned long tStart = 0;
+    static uint8_t lastPin = 255;
 
-    // === GESTION DU BOUTON ROUGE ===
-    if (button_red_pressed()) {
-        if (!redButtonHeld) {
-            redButtonHeld = true;
-            redButtonStart = now;
+    int state = digitalRead(pin);
+
+    if (state == LOW)
+    {
+        if (lastPin != pin)
+        {
+            tStart = millis();
+            lastPin = pin;
         }
-        else if (now - redButtonStart >= HOLD_TIME) {
-            // ----- APPUI LONG (>=5s) -----
-            switch (*currentMode) {
+        if (millis() - tStart >= LONG_PRESS_MS)
+        {
+            lastPin = 255;
+            return true;
+        }
+    }
+    else
+    {
+        if (pin == lastPin)
+            lastPin = 255;
+    }
+    return false;
+}
 
-                case 0: // STANDARD → MAINTENANCE
-                    previousMode = *currentMode;
-                    *currentMode = 2;
-                    break;
+// ========================================
+// Gère transitions de mode
+// currentMode : 0=STD,1=CONFIG,2=MAINT,3=ECO
+// ========================================
+void handle_buttons(uint8_t* currentMode)
+{
+    if (!currentMode) return;
 
-                case 3: // ECO → STANDARD
-                    *currentMode = 0;
-                    break;
+    bool rougeLong = button_is_long_press(BTN_ROUGE);
+    bool vertLong  = button_is_long_press(BTN_VERT);
 
-                case 2: // MAINTENANCE → retour au mode précédent
-                    *currentMode = previousMode;
-                    break;
-
-                // CONFIG : rien ici (retour géré ailleurs)
-                default:
-                    break;
+    switch (*currentMode)
+    {
+        // =================================
+        // STANDARD → Maintenance / Eco
+        // =================================
+        case 0: // Standard
+            if (rougeLong)
+            {
+                *currentMode = 2;        // Maintenance
+                led_color(255,128,0);    // orange
+                sd_close();
             }
-
-            redButtonHeld = false; // éviter répétitions
-        }
-    }
-    else {
-        // ----- RELÂCHEMENT DU BOUTON -----
-        if (redButtonHeld) {
-            unsigned long pressDuration = now - redButtonStart;
-
-            // ----- APPUI COURT (<5s) -----
-            if (pressDuration < HOLD_TIME) {
-                // STANDARD → CONFIGURATION
-                if (*currentMode == 0) {
-                    *currentMode = 1;
-                }
+            else if (vertLong)
+            {
+                *currentMode = 3;        // ECO
+                led_color(0,0,255);      // bleu
             }
+            break;
 
-            redButtonHeld = false;
-        }
-    }
-
-    // === GESTION DU BOUTON VERT ===
-    if (button_blue_pressed()) {
-        if (!greenButtonHeld) {
-            greenButtonHeld = true;
-            greenButtonStart = now;
-        }
-        else if (now - greenButtonStart >= HOLD_TIME) {
-            // ----- APPUI LONG (>=5s) -----
-            switch (*currentMode) {
-
-                case 0: // STANDARD → ECO
-                    previousMode = *currentMode;
-                    *currentMode = 3;
-                    break;
-
-                // autres modes : pas d'effet
-                default:
-                    break;
+        // =================================
+        // MAINTENANCE → Standard
+        // =================================
+        case 2:
+            if (rougeLong)
+            {
+                *currentMode = 0;        // Standard
+                led_color(0,255,0);      // vert
+                sd_init(4);              // ré-ouverture SD
             }
+            break;
 
-            greenButtonHeld = false;
-        }
-    }
-    else {
-        greenButtonHeld = false;
+        // =================================
+        // ECO → Standard
+        // =================================
+        case 3:
+            if (rougeLong)
+            {
+                *currentMode = 0;
+                led_color(0,255,0);      // vert
+            }
+            break;
+
+        // =================================
+        // CONFIG : transitions gérées via boot
+        // =================================
+        case 1:
+        default:
+            break;
     }
 }
-

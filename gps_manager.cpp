@@ -1,65 +1,106 @@
 #include "gps_manager.h"
-#include "config.h"
 #include <TinyGPSPlus.h>
 #include <SoftwareSerial.h>
 
-// === Définition des broches ===
-// RX Arduino ← TX GPS  |  TX Arduino → RX GPS
-static const uint8_t GPS_RX = 6;
-static const uint8_t GPS_TX = 7;
+// -----------------------------
+// GPS Air530Z → Grove
+// TX GPS → D6 (RX µC)
+// RX GPS ← D7 (TX µC)
+// Baud = 9600
+// -----------------------------
 
-// === Instances des objets ===
-static SoftwareSerial gpsSerial(GPS_RX, GPS_TX);
-static TinyGPSPlus gps;
+static const uint8_t GPS_RX = 6;  // Arduino lit ici (GPS → µC)
+static const uint8_t GPS_TX = 7;  // Arduino parle ici (µC → GPS)
+
+static TinyGPSPlus     gps;
+static SoftwareSerial  gpsSerial(GPS_RX, GPS_TX);
+
 static bool gpsEnabled = true;
 
-// === Fonctions publiques ===
-void gps_set_enabled(bool en) { gpsEnabled = en; }
-bool gps_is_enabled() { return gpsEnabled; }
 
-// === Initialisation ===
-void gps_init() {
-    gpsSerial.begin(9600); // conforme au wiki Seeed (9600 baud par défaut)
-    Serial.println(F("GPS Air530 initialisé sur D6(DRX)/D7(DTX) à 9600 bauds."));
+// ----------------------------------------------------
+void gps_set_enabled(bool en)
+{
+    gpsEnabled = en;
 }
 
-// === Lecture du GPS ===
-bool gps_read(GpsData &out, unsigned long timeout_ms) {
-    if (!gpsEnabled) return false;
+bool gps_is_enabled()
+{
+    return gpsEnabled;
+}
+
+
+// ----------------------------------------------------
+// Init module GPS
+// ----------------------------------------------------
+void gps_init()
+{
+    gpsSerial.begin(9600);
+    gpsEnabled = true;
+}
+
+
+// ----------------------------------------------------
+// Lecture GPS avec timeout
+// Remplit GpsData
+// Retourne true si FIX valide
+// ----------------------------------------------------
+bool gps_read(GpsData& out, unsigned long timeout_ms)
+{
+    if (!gpsEnabled) {
+        out.fix  = false;
+        return false;
+    }
 
     unsigned long start = millis();
-    bool received = false;
 
-    while (millis() - start < timeout_ms) {
-        while (gpsSerial.available()) {
-            char c = gpsSerial.read();
-            if (gps.encode(c)) received = true;
+    while (millis() - start < timeout_ms)
+    {
+        while (gpsSerial.available() > 0)
+        {
+            gps.encode(gpsSerial.read());
+        }
+
+        if (gps.location.isUpdated())
+        {
+            out.fix   = gps.location.isValid();
+            out.lat   = gps.location.lat();
+            out.lon   = gps.location.lng();
+            out.alt   = gps.altitude.meters();
+            out.sats  = gps.satellites.value();
+            out.speed = gps.speed.kmph();
+
+            // UTC
+            if (gps.time.isValid())
+            {
+                char bufT[9];
+                snprintf(bufT, sizeof(bufT), "%02d:%02d:%02d",
+                         gps.time.hour(),
+                         gps.time.minute(),
+                         gps.time.second());
+                out.timeUTC = bufT;
+            } else {
+                out.timeUTC = "NA";
+            }
+
+            // Date
+            if (gps.date.isValid())
+            {
+                char bufD[11];
+                snprintf(bufD, sizeof(bufD), "%04d-%02d-%02d",
+                         gps.date.year(),
+                         gps.date.month(),
+                         gps.date.day());
+                out.date = bufD;
+            } else {
+                out.date = "NA";
+            }
+
+            return out.fix;   // OK
         }
     }
 
-    // Remplissage des données
-    if (gps.location.isValid()) {
-        out.fix = true;
-        out.lat = gps.location.lat();
-        out.lon = gps.location.lng();
-    } else out.fix = false;
-
-    if (gps.altitude.isValid())   out.alt = gps.altitude.meters();
-    if (gps.satellites.isValid()) out.sats = gps.satellites.value();
-    if (gps.speed.isValid())      out.speed = gps.speed.kmph();
-
-    if (gps.time.isValid()) {
-        char buf[9];
-        snprintf(buf, sizeof(buf), "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
-        out.timeUTC = String(buf);
-    }
-    if (gps.date.isValid()) {
-        char buf[11];
-        snprintf(buf, sizeof(buf), "20%02d-%02d-%02d", gps.date.year()%100, gps.date.month(), gps.date.day());
-        out.date = String(buf);
-    }
-
-    // Retour : vrai si au moins une trame valide reçue
-    return out.fix && received;
+    // Pas d’update
+    out.fix = false;
+    return false;
 }
-// Retourne vrai si le GPS a une position valide

@@ -1,89 +1,55 @@
-#include <EEPROM.h>
 #include "config.h"
+#include <EEPROM.h>
 
-// === Instance unique ===
+// ========================================================
+// EEPROM layout
+// On stocke la struct telle quelle
+// ========================================================
+
 Config config = {
-    10,     // LOG_INTERVALL
-    30,     // TIMEOUT
-    4096,    // FILE_MAX_SIZE
-    1,      // GPS activé par défaut
-    5,       // GPS_TIMEOUT = 5s
+    10,     // LOG_INTERVALL (min)
+    30,     // TIMEOUT (s)
+    4096,   // FILE_MAX_SIZE (octets)
+    1,      // GPS actif
+    5       // GPS_TIMEOUT (s)
 };
 
-// === Table des paramètres ===
-ConfigParam configParams[] = {
-    {"LOG_INTERVALL", &config.LOG_INTERVALL, 1, 60, 10},
-    {"TIMEOUT",       &config.TIMEOUT,       1, 300, 30},
-    {"FILE_MAX_SIZE", &config.FILE_MAX_SIZE, 512, 32767, 4096},
-    {"GPS",           &config.GPS,           0, 1, 1},
-    {"GPS_TIMEOUT",   &config.GPS_TIMEOUT,   1, 60, 5}
-};
-const int NUM_CONFIG_PARAMS = sizeof(configParams) / sizeof(ConfigParam);
+// --------------------------------------------------------
+static void eeprom_read(Config& c)
+{
+    EEPROM.get(0, c);
 
-// === Fonctions principales ===
+    // sécurité si EEPROM vide / incohérente
+    if (c.LOG_INTERVALL <= 0 || c.LOG_INTERVALL > 1440)
+        c.LOG_INTERVALL = 10;
 
-void config_reset_defaults() {
-    for (int i = 0; i < NUM_CONFIG_PARAMS; i++) {
-        *configParams[i].value = configParams[i].defaultVal;
-    }
-    config_save();
+    if (c.TIMEOUT <= 0 || c.TIMEOUT > 3600)
+        c.TIMEOUT = 30;
+
+    if (c.FILE_MAX_SIZE < 512 || c.FILE_MAX_SIZE > 32767)
+        c.FILE_MAX_SIZE = 4096;
+
+    if (c.GPS < 0 || c.GPS > 1)
+        c.GPS = 1;
+
+    if (c.GPS_TIMEOUT <= 0 || c.GPS_TIMEOUT > 60)
+        c.GPS_TIMEOUT = 5;
 }
 
-void config_save() {
-    EEPROM.put(0, config);
+// --------------------------------------------------------
+static void eeprom_write(const Config& c)
+{
+    EEPROM.put(0, c);
 }
 
-void config_init() {
-    EEPROM.get(0, config);
-
-    // Validation des bornes
-    for (int i = 0; i < NUM_CONFIG_PARAMS; i++) {
-        if (*configParams[i].value < configParams[i].minVal ||
-            *configParams[i].value > configParams[i].maxVal) {
-            *configParams[i].value = configParams[i].defaultVal;
-        }
-    }
+// --------------------------------------------------------
+void config_init()
+{
+    eeprom_read(config);
 }
 
-// === Accès dynamiques ===
-
-bool config_set(const char* key, int value) {
-    for (int i = 0; i < NUM_CONFIG_PARAMS; i++) {
-        if (strcmp(key, configParams[i].name) == 0) {
-            if (value >= configParams[i].minVal && value <= configParams[i].maxVal) {
-                *configParams[i].value = value;
-                config_save();
-                return true;
-            } else {
-                return false; // Hors bornes
-            }
-        }
-    }
-    return false; // Clé non trouvée
-}
-
-int config_get(const char* key) {
-    for (int i = 0; i < NUM_CONFIG_PARAMS; i++) {
-        if (strcmp(key, configParams[i].name) == 0)
-            return *configParams[i].value;
-    }
-    return -1; // Non trouvé
-}
-
-void config_print() {
-    Serial.println("=== Configuration actuelle ===");
-    for (int i = 0; i < NUM_CONFIG_PARAMS; i++) {
-        Serial.print(configParams[i].name);
-        Serial.print(" = ");
-        Serial.println(*configParams[i].value);
-    }
-}
-
-void config_print_from_eeprom() {
-    Config temp;
-    EEPROM.get(0, temp);
-    Serial.println("=== Données réelles EEPROM ===");
-    Serial.print("LOG_INTERVALL = "); Serial.println(temp.LOG_INTERVALL);
-    Serial.print("TIMEOUT       = "); Serial.println(temp.TIMEOUT);
-    Serial.print("FILE_MAX_SIZE = "); Serial.println(temp.FILE_MAX_SIZE);
+// --------------------------------------------------------
+void config_save()
+{
+    eeprom_write(config);
 }

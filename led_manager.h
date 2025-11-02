@@ -4,19 +4,22 @@
 #include <Arduino.h>
 #include <ChainableLED.h>
 
-// Déclaration du contrôleur de LEDs (défini dans le .cpp)
+// === LED chainable P9813 ===
 extern ChainableLED leds;
 
-// Fonctions de contrôle basique
-void led_color(int red, int green, int blue);
+// Couleur fixe
+void led_color(uint8_t r, uint8_t g, uint8_t b);
 void led_off();
 
-void led_pattern_sd_full();         // Rouge <-> Blanc (1 Hz)   (SD pleine)
-void led_pattern_sd_write_error();  // Rouge <-> Blanc (Blanc x2) (Erreur R/W)
+// Patterns d'erreurs
+// SD pleine → Rouge <-> Blanc (1 Hz)
+void led_pattern_sd_full();
 
+// Erreur R/W → Rouge (0.5s) Blanc (1s)
+void led_pattern_sd_write_error();
 
-// Fonction transversale de gestion de LEDs selon le mode
-// Mode : 0=STANDARD, 1=CONFIG, 2=MAINTENANCE, 3=ECO
+// Gère couleur selon mode
+// 0=STANDARD,1=CONFIG,2=MAINTENANCE,3=ECO
 void handle_leds(uint8_t currentMode);
 
 #endif
