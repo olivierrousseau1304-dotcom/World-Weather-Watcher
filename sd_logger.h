@@ -3,16 +3,23 @@
 
 #include <Arduino.h>
 #include "gps_manager.h"
+#include "bme_manager.h"
 
-// API publique – version définitive
+// --- Light struct ---
+struct LightData {
+    int value;
+    bool ok;
+};
+
+// --- API ---
 bool     sd_init(uint8_t csPin = 4);
 bool     sd_is_ready();
 void     sd_close();
-
-bool     sd_append_csv(const GpsData& g,
-                       const String& dateStr,
-                       const String& timeStr);
-
+bool     sd_append_csv(const GpsData& gps,
+                       const BmeData& bme,
+                       const LightData& l,
+                       const char* dateStr,
+                       const char* timeStr);
 void     sd_set_max_file_size(uint32_t bytes);
 uint32_t sd_get_current_size();
 const char* sd_get_current_filename();

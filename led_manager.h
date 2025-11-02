@@ -4,22 +4,23 @@
 #include <Arduino.h>
 #include <ChainableLED.h>
 
-// === LED chainable P9813 ===
+// === P9813 LEDs ===
 extern ChainableLED leds;
 
-// Couleur fixe
+// === Init ===
+void led_init();
+
+// === Fixed colors ===
 void led_color(uint8_t r, uint8_t g, uint8_t b);
 void led_off();
 
-// Patterns d'erreurs
-// SD pleine → Rouge <-> Blanc (1 Hz)
-void led_pattern_sd_full();
+// === Patterns ===
+void led_pattern_sd_full();           // Rouge <-> Blanc (1Hz)
+void led_pattern_sd_write_error();    // Rouge <-> Blanc (Blanc x2)
 
-// Erreur R/W → Rouge (0.5s) Blanc (1s)
-void led_pattern_sd_write_error();
-
-// Gère couleur selon mode
-// 0=STANDARD,1=CONFIG,2=MAINTENANCE,3=ECO
-void handle_leds(uint8_t currentMode);
+void led_pattern_rtc_error();         // Rouge <-> Bleu
+void led_pattern_gps_error();         // Rouge <-> Jaune
+void led_pattern_sensor_error();      // Rouge <-> Vert
+void led_pattern_sensor_incoherent(); // Rouge <-> Vert (Vert x2)
 
 #endif

@@ -1,135 +1,182 @@
 #include <Arduino.h>
 
-// === Modules internes ===
-#include "sd_logger.h"
-#include "rtc_manager.h"
 #include "config.h"
-#include "led_manager.h"
+#include "commands.h"
 #include "gps_manager.h"
+#include "bme_manager.h"
+#include "rtc_manager.h"
+#include "sd_logger.h"
+#include "led_manager.h"
 #include "button_manager.h"
 
-// === Variables globales ===
-// Mode : 0 = STANDARD, 1 = CONFIG, 2 = MAINTENANCE, 3 = ECO
-uint8_t currentMode = 0;
 
+// ================================
+// Modes
+// ================================
+#define MODE_STANDARD     0
+#define MODE_CONFIG       1
+#define MODE_MAINT        2
+#define MODE_ECO          3
+
+uint8_t currentMode = MODE_STANDARD;
+
+
+// ================================
+// Light wrapper
+// ================================
+static LightData readLight()
+{
+    LightData l;
+    l.value = analogRead(A0);
+    l.ok = true;
+    return l;
+}
+
+
+// ================================
+// SETUP
+// ================================
 void setup()
 {
     Serial.begin(9600);
-    Serial.println();
-    Serial.println(F("=== SYSTEME 3W_V5_2 - INITIALISATION ==="));
 
+    // LED MUST BE FIRST → avoid white boot
+    led_init();
+    led_off();
+
+    // Buttons
     button_init();
+
+    // Configuration
     config_init();
 
-    // Détection configuration au boot
-    if (button_red_pressed()) {
-        currentMode = 1; // CONFIG
-        Serial.println(F("[MODE] Configuration (bouton rouge détecté)"));
-    } else {
-        currentMode = 0; // STANDARD
-        Serial.println(F("[MODE] Standard"));
+    // Choose startup mode (red = CONFIG)
+    if (button_red_pressed())
+    {
+        currentMode = MODE_CONFIG;
+        led_color(255,255,0);   // Yellow
     }
-    handle_leds(currentMode);
+    else
+    {
+        currentMode = MODE_STANDARD;
+        led_color(0,255,0);     // Green
+    }
 
     // RTC
     rtc_init();
-    if (!rtc_is_available()) {
-        Serial.println(F("[RTC] Non détecté"));
-    } else {
-        Serial.print(F("[RTC] "));
-        Serial.print(rtc_get_date_str());
-        Serial.print(' ');
-        Serial.println(rtc_get_time_str());
-    }
 
     // GPS
     gps_init();
     gps_set_enabled(config.GPS == 1);
-    Serial.println(gps_is_enabled() ? F("[GPS] Module actif") : F("[GPS] Désactivé"));
 
     // SD
-    if (!sd_init(4)) {
-        Serial.println(F("[SD] INIT FAIL"));
+    if (!sd_init(4))
+    {
         led_pattern_sd_write_error();
-    } else {
+    }
+    else
+    {
         sd_set_max_file_size((uint32_t)config.FILE_MAX_SIZE);
-        Serial.print(F("[SD] OK, fichier: "));
-        Serial.println(sd_get_current_filename());
     }
 
-    Serial.println(F("[SETUP] Terminé."));
+    // BME
+    bme_init();
 }
 
 
+
+// ================================
+// LOOP
+// ================================
 void loop()
 {
-    static unsigned long lastLogMs = 0;
-    static bool ecoToggle = false;
-    static uint8_t prevMode = 255;
+    // Serial commands (CONFIG mode)
+    commands_poll();
 
-    handle_buttons(&currentMode);
+    bool red  = button_red_pressed();
+    bool blue = button_blue_pressed();
 
-    // Transitions de modes
-    if (currentMode != prevMode)
+
+    // ---------------------------------
+    // Transitions
+    // ---------------------------------
+    if (currentMode == MODE_STANDARD)
     {
-        if (currentMode == 2) {          // MAINTENANCE → SD close
-            sd_close();
-            Serial.println(F("[SD] Fermeture (maintenance)"));
-        }
-        else if (prevMode == 2 && currentMode == 0) // retour standard
+        if (red)     // → MAINT
         {
-            if (sd_init(4)) {
-                sd_set_max_file_size((uint32_t)config.FILE_MAX_SIZE);
-                Serial.println(F("[SD] Réouverture OK"));
-            } else {
-                Serial.println(F("[SD] Réouverture échouée"));
-                led_pattern_sd_write_error();
-            }
+            currentMode = MODE_MAINT;
+            led_color(255,128,0);    // orange
+            sd_close();
         }
-
-        handle_leds(currentMode);
-        prevMode = currentMode;
+        if (blue)    // → ECO
+        {
+            currentMode = MODE_ECO;
+            led_color(0,0,255);      // blue
+        }
+    }
+    else if (currentMode == MODE_MAINT)
+    {
+        if (red)     // back → STANDARD
+        {
+            currentMode = MODE_STANDARD;
+            led_color(0,255,0);
+            sd_init(4);
+        }
+    }
+    else if (currentMode == MODE_ECO)
+    {
+        if (red)     // back → STANDARD
+        {
+            currentMode = MODE_STANDARD;
+            led_color(0,255,0);
+        }
     }
 
-    // Fréquence LOG
+
+
+    // ---------------------------------
+    // Logging
+    // ---------------------------------
+    static unsigned long lastLog = 0;
+
     uint32_t intervalMin = config.LOG_INTERVALL;
-    if (currentMode == 3) intervalMin *= 2;   // ECO
-    uint32_t intervalMs = intervalMin * 60UL * 1000UL;
+    if (currentMode == MODE_ECO)
+        intervalMin *= 2;
 
-    if (millis() - lastLogMs >= intervalMs)
+    uint32_t intervalMs = intervalMin * 60000UL;
+
+    if (millis() - lastLog >= intervalMs)
     {
-        lastLogMs = millis();
+        lastLog = millis();
 
-        bool doGps = true;
-        if (currentMode == 3) { ecoToggle = !ecoToggle; doGps = ecoToggle; }
+        // GPS
+        GpsData gps;
+        bool gps_ok = gps_is_enabled()
+                    ? gps_read(gps, config.GPS_TIMEOUT * 1000UL)
+                    : false;
 
-        GpsData data;
-        bool ok = false;
-        if (gps_is_enabled() && doGps) {
-            ok = gps_read(data, (unsigned long)config.GPS_TIMEOUT * 1000UL);
-        }
+        // BME
+        BmeData bme;
+        bool bme_ok = bme_read(bme);
 
+        // LIGHT
+        LightData l = readLight();
+
+        // RTC strings
         String dStr = rtc_get_date_str();
         String tStr = rtc_get_time_str();
 
-        if (currentMode == 0 && sd_is_ready())
+
+        // SD logging only in STANDARD
+        if (currentMode == MODE_STANDARD && sd_is_ready())
         {
-            if (!sd_append_csv(data, dStr, tStr))
-            {
-                Serial.println(F("[SD] Erreur ecriture/rotation"));
-            }
-        }
-
-        Serial.println(F("-----"));
-        Serial.print(F("Date: ")); Serial.print(dStr);
-        Serial.print(F("  Time: ")); Serial.println(tStr);
-
-        if (ok) {
-            Serial.print(F("Lat: "));  Serial.print(data.lat, 6);
-            Serial.print(F("  Lon: "));Serial.print(data.lon, 6);
-            Serial.print(F("  Sats: "));Serial.println(data.sats);
-        } else {
-            Serial.println(F("GPS: Pas de fix ou non lu"));
+            sd_append_csv(
+                gps,
+                bme,
+                l,
+                dStr.c_str(),
+                tStr.c_str()
+            );
         }
     }
 }

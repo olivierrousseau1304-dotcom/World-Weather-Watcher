@@ -3,18 +3,23 @@
 
 #include <Arduino.h>
 
-// =====================================================
-// RTC – DS3231
-// API publique
-// =====================================================
+// ============================
+// API
+// ============================
+void rtc_init();
+bool rtc_is_available();
 
-void   rtc_init();
-bool   rtc_is_available();
-
-// Renvoie "YYYY-MM-DD"
+// "YYYY-MM-DD"
 String rtc_get_date_str();
 
-// Renvoie "HH:MM:SS"
+// "HH:MM:SS"
 String rtc_get_time_str();
+
+// === Optimised (no String) ===
+// Fill buffer: "YYMMDD"   => must be >= 7 bytes
+void rtc_get_date_YYMMDD(char* out6);
+
+// Fill buffer: "HHMMSS"   => must be >= 7 bytes
+void rtc_get_time_HHMMSS(char* out6);
 
 #endif

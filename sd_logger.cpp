@@ -1,178 +1,202 @@
 #include "sd_logger.h"
-#include <SD.h>
-#include "rtc_manager.h"
+#include <SdFat.h>
 #include "led_manager.h"
+#include "rtc_manager.h"
 
-static File     logFile;
-static bool     sd_ok = false;
-static uint8_t  sd_cs = 4;
-static uint32_t maxFileSize = 4096;
-static char     currentName[20];   // "YYMMDD_0.LOG"
+// ===================================================
+//   SD STATE
+// ===================================================
+static SdFat   sd;
+static File    logFile;
+static bool    sdReady = false;
+static uint32_t maxSize = 2048UL;
 
-// -------------------------------------------------------------
-// Helpers : noms basés sur la date RTC
-// -------------------------------------------------------------
-static void makeDailyBaseName(char* out) {
-    String ds = rtc_get_date_str(); // "YYYY-MM-DD" ou "0000-00-00"
-    const char* y = ds.c_str();
+static char currentFile[20] = {0};
 
-    char YY[3] = "00";
-    char MM[3] = "00";
-    char DD[3] = "00";
+// ===================================================
+// Print float WITHOUT float.print()
+// ===================================================
+static void printFixed(File &f, float v, uint8_t decimals)
+{
+    if (v < 0) { f.write('-'); v = -v; }
 
-    if (ds.length() >= 10) {
-        YY[0] = y[2]; YY[1] = y[3];
-        MM[0] = y[5]; MM[1] = y[6];
-        DD[0] = y[8]; DD[1] = y[9];
+    uint32_t mult = 1;
+    for (uint8_t i=0; i<decimals; i++) mult *= 10;
+
+    uint32_t iv = (uint32_t)(v * mult + 0.5f);
+    uint32_t ip = iv / mult;
+    uint32_t fp = iv % mult;
+
+    f.print(ip);
+    if (!decimals) return;
+
+    f.write('.');
+    uint32_t div = mult / 10;
+    while (div > 0) {
+        if (fp < div) f.write('0');
+        div /= 10;
     }
-    sprintf(out, "%s%s%s_0.LOG", YY, MM, DD);
+    f.print(fp);
 }
 
-static void makePrefix(char* out) {
-    String ds = rtc_get_date_str();
-    const char* y = ds.c_str();
-    char YY[3] = "00", MM[3] = "00", DD[3] = "00";
-    if (ds.length() >= 10) {
-        YY[0] = y[2]; YY[1] = y[3];
-        MM[0] = y[5]; MM[1] = y[6];
-        DD[0] = y[8]; DD[1] = y[9];
-    }
-    sprintf(out, "%s%s%s", YY, MM, DD);
+
+// ===================================================
+//  HEADER
+// ===================================================
+static void writeHeader(File &f)
+{
+    f.println(F("date,time,lat,lon,alt,sats,speed,temp,hum,press,lum"));
 }
 
-// -------------------------------------------------------------
-void sd_set_max_file_size(uint32_t bytes) { maxFileSize = bytes; }
 
-// -------------------------------------------------------------
-bool sd_init(uint8_t cs) {
-    sd_cs = cs;
+// ===================================================
+//  CREATE _0 FILE OF THE DAY
+// ===================================================
+static bool openTodayFile()
+{
+    char date[9];
+    rtc_get_date_YYMMDD(date);
 
-    // IMPORTANT UNO: rester en SPI master
-    pinMode(10, OUTPUT);
-    digitalWrite(10, HIGH);
+    snprintf(currentFile, sizeof(currentFile),
+             "%s_0.LOG", date);
 
-    pinMode(sd_cs, OUTPUT);
-    if (!SD.begin(sd_cs)) {
-        sd_ok = false;
-        return false;
-    }
-    sd_ok = true;
+    logFile = sd.open(currentFile, FILE_WRITE);
+    if (!logFile) return false;
 
-    makeDailyBaseName(currentName);
-
-    // Crée _0.LOG du jour s'il n'existe pas (avec en-tête CSV)
-    if (!SD.exists(currentName)) {
-        logFile = SD.open(currentName, FILE_WRITE);
-        if (!logFile) { sd_ok = false; return false; }
-        logFile.println(F("date,utc,lat,lon,alt,sats,speed"));
-        logFile.flush();
-        logFile.close();
-    }
+    writeHeader(logFile);
+    logFile.flush();
     return true;
 }
 
-// -------------------------------------------------------------
-bool sd_is_ready() { return sd_ok; }
 
-// -------------------------------------------------------------
-void sd_close() {
-    if (logFile) { logFile.flush(); logFile.close(); }
-}
+// ===================================================
+//  ROTATION
+// ===================================================
+static bool rotateFile()
+{
+    if (logFile) logFile.close();
 
-// -------------------------------------------------------------
-uint32_t sd_get_current_size() {
-    if (!sd_ok) return 0;
-    File f = SD.open(currentName, FILE_READ);
-    if (!f) return 0;
-    uint32_t s = f.size();
-    f.close();
-    return s;
-}
+    char date[9];
+    rtc_get_date_YYMMDD(date);
 
-// -------------------------------------------------------------
-const char* sd_get_current_filename() { return currentName; }
-
-// -------------------------------------------------------------
-static bool copySmallFile(const char* src, const char* dst) {
-    File in = SD.open(src, FILE_READ);
-    if (!in) return false;
-    File out = SD.open(dst, FILE_WRITE);
-    if (!out) { in.close(); return false; }
-
-    char buf[64];
-    int n;
-    while ((n = in.read(buf, sizeof(buf))) > 0) {
-        if (out.write(buf, n) != n) { in.close(); out.close(); return false; }
-    }
-    in.close(); out.flush(); out.close();
-    return true;
-}
-
-// -------------------------------------------------------------
-static bool rotateFiles() {
-    char prefix[10];
-    makePrefix(prefix);
-
-    // Cherche le prochain index libre
-    for (int k = 1; k < 100; k++) {
+    // search LOG_1.LOG ... LOG_n.LOG
+    for (uint8_t i = 1; i < 50; i++)
+    {
         char newName[20];
-        snprintf(newName, sizeof(newName), "%s_%d.LOG", prefix, k);
-        if (!SD.exists(newName)) {
-            // copie _0 -> _k
-            if (!copySmallFile(currentName, newName)) {
-                led_pattern_sd_write_error(); // signal fort
-                return false;
-            }
-            // recrée _0 avec en-tête
-            logFile = SD.open(currentName, FILE_WRITE);
-            if (!logFile) { sd_ok = false; return false; }
-            logFile.println(F("date,utc,lat,lon,alt,sats,speed"));
-            logFile.flush();
-            logFile.close();
-            return true;
+        snprintf(newName, sizeof(newName), "%s_%u.LOG", date, i);
+
+        // if free → rename
+        if (!sd.exists(newName))
+        {
+            sd.rename(currentFile, newName);
+            return openTodayFile();
         }
     }
-    // Pas de slot libre : SD pleine / plancher de rotation atteint
+
+    // Too many rotations
     led_pattern_sd_full();
     return false;
 }
 
-// -------------------------------------------------------------
-bool sd_append_csv(const GpsData& g, const String& dateStr, const String& timeStr) {
-    if (!sd_ok) return false;
 
-    // Rotation si taille > max
-    if (sd_get_current_size() > maxFileSize) {
-        if (!rotateFiles()) return false;
+// ===================================================
+//  API IMPLEMENTATION
+// ===================================================
+bool sd_init(uint8_t csPin)
+{
+    if (!sd.begin(csPin))
+    {
+        sdReady = false;
+        return false;
     }
 
-    logFile = SD.open(currentName, FILE_WRITE);
-    if (!logFile) { sd_ok = false; led_pattern_sd_write_error(); return false; }
+    sdReady = openTodayFile();
+    return sdReady;
+}
 
-    char latBuf[16]   = "NA";
-    char lonBuf[16]   = "NA";
-    char altBuf[16]   = "NA";
-    char satsBuf[8]   = "NA";
-    char speedBuf[16] = "NA";
+bool sd_is_ready()
+{
+    return sdReady;
+}
 
-    if (g.fix) {
-        dtostrf(g.lat,   1, 6, latBuf);
-        dtostrf(g.lon,   1, 6, lonBuf);
-        dtostrf(g.alt,   1, 2, altBuf);
-        snprintf(satsBuf, sizeof(satsBuf), "%u", g.sats);
-        dtostrf(g.speed, 1, 2, speedBuf);
+
+void sd_close()
+{
+    if (logFile) logFile.close();
+    sdReady = false;
+}
+
+void sd_set_max_file_size(uint32_t bytes)
+{
+    maxSize = bytes;
+}
+
+uint32_t sd_get_current_size()
+{
+    return logFile ? logFile.size() : 0;
+}
+
+const char* sd_get_current_filename()
+{
+    return currentFile;
+}
+
+
+// ===================================================
+//  WRITE CSV LINE
+// ===================================================
+bool sd_append_csv(const GpsData &gps,
+                   const BmeData &bme,
+                   const LightData &l,
+                   const char* dStr,
+                   const char* tStr)
+{
+    if (!sdReady) return false;
+
+    // Rotate if full
+    if (logFile.size() >= maxSize)
+    {
+        if (!rotateFile())
+        {
+            led_pattern_sd_write_error();
+            return false;
+        }
     }
 
-    // CSV : date,utc,lat,lon,alt,sats,speed
-    logFile.print(dateStr);  logFile.print(',');
-    logFile.print(timeStr);  logFile.print(',');
-    logFile.print(latBuf);   logFile.print(',');
-    logFile.print(lonBuf);   logFile.print(',');
-    logFile.print(altBuf);   logFile.print(',');
-    logFile.print(satsBuf);  logFile.print(',');
-    logFile.println(speedBuf);
+    // date,time
+    logFile.print(dStr);
+    logFile.write(',');
+    logFile.print(tStr);
+    logFile.write(',');
+
+    // GPS
+    if (gps.fix) {
+        printFixed(logFile, gps.lat,   6); logFile.write(',');
+        printFixed(logFile, gps.lon,   6); logFile.write(',');
+        printFixed(logFile, gps.alt,   2); logFile.write(',');
+        logFile.print(gps.sats);        logFile.write(',');
+        printFixed(logFile, gps.speed, 2); logFile.write(',');
+    } else {
+        logFile.print(F("NA,NA,NA,NA,NA,"));
+    }
+
+    // BME
+    if (bme.ok) {
+        printFixed(logFile, bme.temperature, 2); logFile.write(',');
+        printFixed(logFile, bme.humidity,    2); logFile.write(',');
+        printFixed(logFile, bme.pressure,    2); logFile.write(',');
+    } else {
+        logFile.print(F("NA,NA,NA,"));
+    }
+
+    // Luminosité
+    if (l.ok) {
+        logFile.print(l.value);
+        logFile.write('\n');
+    } else {
+        logFile.print(F("NA\n"));
+    }
 
     logFile.flush();
-    logFile.close();
     return true;
 }

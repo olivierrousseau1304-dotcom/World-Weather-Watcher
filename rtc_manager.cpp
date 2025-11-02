@@ -1,87 +1,118 @@
 #include "rtc_manager.h"
 #include <Wire.h>
 
-// ===============================
-// DS3231 I2C
-// ===============================
-#define DS3231_ADDRESS 0x68
+#define DS3231_ADDR 0x68
 
 static bool rtcOk = false;
 
-// -----------------------------------------------------
-// Convertisseur BCD
-// -----------------------------------------------------
-static byte bcdToDec(byte val)
+// ------------------------------
+// BCD conversion
+// ------------------------------
+static uint8_t bcdToDec(uint8_t v)
 {
-    return ( (val / 16 * 10) + (val % 16) );
+    return (v >> 4) * 10 + (v & 0x0F);
 }
 
-// -----------------------------------------------------
-// Init RTC
-// -----------------------------------------------------
+// ------------------------------
+// Init
+// ------------------------------
 void rtc_init()
 {
     Wire.begin();
-
-    Wire.beginTransmission(DS3231_ADDRESS);
+    Wire.beginTransmission(DS3231_ADDR);
     rtcOk = (Wire.endTransmission() == 0);
 }
 
-// -----------------------------------------------------
 bool rtc_is_available()
 {
     return rtcOk;
 }
 
-// -----------------------------------------------------
-// Lecture brute registre DS3231
-// renvoie YYYY-MM-DD
-// -----------------------------------------------------
-String rtc_get_date_str()
+// ------------------------------
+// Core read (internal)
+// ------------------------------
+static bool readAll(
+    uint8_t &sec,
+    uint8_t &minu,
+    uint8_t &hour,
+    uint8_t &day,
+    uint8_t &month,
+    uint8_t &year
+)
 {
-    if (!rtcOk) return String("0000-00-00");
+    if (!rtcOk) return false;
 
-    Wire.beginTransmission(DS3231_ADDRESS);
+    Wire.beginTransmission(DS3231_ADDR);
     Wire.write(0x00);
     Wire.endTransmission();
 
-    Wire.requestFrom(DS3231_ADDRESS, 7);
+    Wire.requestFrom(DS3231_ADDR, 7);
+    if (Wire.available() < 7) return false;
 
-    byte second = bcdToDec(Wire.read() & 0x7F);
-    byte minute = bcdToDec(Wire.read());
-    byte hour   = bcdToDec(Wire.read());
-    Wire.read(); // jour semaine (on ignore)
-    byte day    = bcdToDec(Wire.read());
-    byte month  = bcdToDec(Wire.read());
-    byte year   = bcdToDec(Wire.read()); // 0–99
+    sec   = bcdToDec(Wire.read() & 0x7F);
+    minu  = bcdToDec(Wire.read());
+    hour  = bcdToDec(Wire.read());
+    Wire.read(); // ignore day of week
+    day   = bcdToDec(Wire.read());
+    month = bcdToDec(Wire.read());
+    year  = bcdToDec(Wire.read()); // 0–99 => 20xx
+
+    return true;
+}
+
+// ------------------------------
+// YYYY-MM-DD (String)
+// ------------------------------
+String rtc_get_date_str()
+{
+    uint8_t s,m,h,day,month,year;
+    if (!readAll(s,m,h,day,month,year))
+        return String("0000-00-00");
 
     char buf[11];
-    // "YYYY-MM-DD"
-    snprintf(buf, sizeof(buf), "20%02d-%02d-%02d", year, month, day);
-
+    snprintf(buf, sizeof(buf), "20%02u-%02u-%02u", year, month, day);
     return String(buf);
 }
 
-// -----------------------------------------------------
-// Lecture HH:MM:SS
-// -----------------------------------------------------
+// ------------------------------
+// HH:MM:SS (String)
+// ------------------------------
 String rtc_get_time_str()
 {
-    if (!rtcOk) return String("00:00:00");
-
-    Wire.beginTransmission(DS3231_ADDRESS);
-    Wire.write(0x00);
-    Wire.endTransmission();
-
-    Wire.requestFrom(DS3231_ADDRESS, 7);
-
-    byte second = bcdToDec(Wire.read() & 0x7F);
-    byte minute = bcdToDec(Wire.read());
-    byte hour   = bcdToDec(Wire.read());
+    uint8_t s,m,h,day,month,year;
+    if (!readAll(s,m,h,day,month,year))
+        return String("00:00:00");
 
     char buf[9];
-    // "HH:MM:SS"
-    snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hour, minute, second);
-
+    snprintf(buf, sizeof(buf), "%02u:%02u:%02u", h, m, s);
     return String(buf);
+}
+
+// ------------------------------
+// YYMMDD (C-string)
+// ------------------------------
+void rtc_get_date_YYMMDD(char* out6)
+{
+    uint8_t s,m,h,day,month,year;
+    if (!readAll(s,m,h,day,month,year)) {
+        strcpy(out6, "000000");
+        return;
+    }
+
+    // year is 0–99 → keep only last 2 digits
+    snprintf(out6, 7, "%02u%02u%02u", year, month, day);
+}
+
+// ------------------------------
+// HHMMSS (C-string)
+// ------------------------------
+void rtc_get_time_HHMMSS(char* out6)
+{
+    uint8_t s,m,h,day,month,year;
+    if (!readAll(s,m,h,day,month,year)) {
+        strcpy(out6, "000000");
+        return;
+    }
+
+    snprintf(out6, 7, "%02u%02u%02u", h, m, s);
 }

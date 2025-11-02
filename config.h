@@ -3,23 +3,59 @@
 
 #include <Arduino.h>
 
-// ========================================================
-// Structure principale des paramètres système
-// ========================================================
-
+// =====================================================
+// STRUCTURE DE CONFIG
+// =====================================================
 struct Config {
-    int LOG_INTERVALL;   // minutes
-    int TIMEOUT;         // secondes (général)
-    int FILE_MAX_SIZE;   // octets
-    int GPS;             // 0/1
-    int GPS_TIMEOUT;     // secondes
+
+  // Base
+  int LOG_INTERVALL;     // minutes
+  int TIMEOUT;           // sec read sensors
+  int FILE_MAX_SIZE;     // bytes
+  int GPS;               // enable GPS
+  int GPS_TIMEOUT;       // sec read GPS
+
+  // Sensors enable
+  int LUMIN;             // enable luminosity
+  int TEMP_AIR;          // enable temperature
+  int HYGR;              // enable humidity
+  int PRESSURE;          // enable pressure
+
+  // Lumi bounds
+  int LUMIN_LOW;
+  int LUMIN_HIGH;
+
+  // temp bounds
+  int MIN_TEMP_AIR;
+  int MAX_TEMP_AIR;
+
+  // humidity bounds
+  int HYGR_MINT;
+  int HYGR_MAXT;
+
+  // pressure bounds
+  int PRESSURE_MIN;
+  int PRESSURE_MAX;
 };
 
-// Param global accessible partout
+// =====================================================
+// API
+// =====================================================
 extern Config config;
 
-// ========================================================
+// initialisation → load EEPROM
 void config_init();
+
+// impression des paramètres
+void config_print_all();
+
+// sauve en EEPROM
 void config_save();
+
+// remet valeurs défaut
+void config_reset_defaults();
+
+// setter SET <key> <value>
+bool config_set_param(const String &key, int value);
 
 #endif

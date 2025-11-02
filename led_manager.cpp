@@ -1,38 +1,99 @@
 #include "led_manager.h"
 
-// DATA=D8, CLK=D9 (adapte si besoin)
+// === P9813 LED setup ===
+// DI = 8, CI = 9 — 1 LED
 ChainableLED leds(8, 9, 1);
 
-void led_color(uint8_t r, uint8_t g, uint8_t b) { leds.setColorRGB(0, r, g, b); }
-void led_off() { leds.setColorRGB(0, 0, 0, 0); }
 
-// --------- PATTERN SD PLEINE / ROTATION KO (3 cycles, ~3 s) ----------
-void led_pattern_sd_full() {
-    for (uint8_t i = 0; i < 3; ++i) {
-        led_color(255, 0, 0);     delay(500);  // rouge
-        led_color(255, 255, 255); delay(500);  // blanc
-    }
-    // Laisse en rouge fixe pour signal fort
-    led_color(255, 0, 0);
+// ============================================================
+// BASE
+// ============================================================
+void led_init()
+{
+  // Force frame reset
+  leds.setColorRGB(0, 0, 0, 0);   // r,g,b = 0
+  delay(5);
+
+  // Envoie une seconde fois pour être sûr
+  leds.setColorRGB(0, 0, 0, 0);
+  delay(5);
 }
 
-// --------- PATTERN ERREUR ECRITURE (3 cycles, ~4.5 s) ----------
-void led_pattern_sd_write_error() {
-    for (uint8_t i = 0; i < 3; ++i) {
-        led_color(255, 0, 0);     delay(500);   // rouge court
-        led_color(255, 255, 255); delay(1000);  // blanc long
-    }
-    // Laisse en rouge fixe
-    led_color(255, 0, 0);
+void led_color(uint8_t r, uint8_t g, uint8_t b)
+{
+  leds.setColorRGB(0, r, g, b);
 }
 
-// 0=STANDARD (vert), 1=CONFIG (jaune), 2=MAINT (orange), 3=ECO (bleu)
-void handle_leds(uint8_t currentMode) {
-    switch (currentMode) {
-        case 0: led_color(0, 255, 0);    break;
-        case 1: led_color(255, 255, 0);  break;
-        case 2: led_color(255, 128, 0);  break;
-        case 3: led_color(0, 0, 255);    break;
-        default: led_off();              break;
-    }
+void led_off()
+{
+  led_color(0,0,0);
+}
+
+
+// ============================================================
+// HELPER
+// ============================================================
+static void patternBlink(uint8_t r1,uint8_t g1,uint8_t b1,
+                         uint8_t r2,uint8_t g2,uint8_t b2,
+                         uint16_t delayMs)
+{
+  led_color(r1,g1,b1);
+  delay(delayMs);
+  led_color(r2,g2,b2);
+  delay(delayMs);
+}
+
+
+// ============================================================
+// SD patterns
+// ============================================================
+
+void led_pattern_sd_full()
+{
+  patternBlink(255,0,0, 255,255,255, 500);
+}
+
+void led_pattern_sd_write_error()
+{
+  led_color(255,0,0);     delay(300);
+  led_color(255,255,255); delay(200);
+  led_color(255,255,255); delay(200);
+}
+
+
+// ============================================================
+// RTC error — Red/Blue
+// ============================================================
+void led_pattern_rtc_error()
+{
+  patternBlink(255,0,0, 0,0,255, 500);
+}
+
+
+// ============================================================
+// GPS error — Red/Yellow
+// ============================================================
+void led_pattern_gps_error()
+{
+  patternBlink(255,0,0, 255,255,0, 500);
+}
+
+
+// ============================================================
+// Sensor error — Red/Green
+// ============================================================
+void led_pattern_sensor_error()
+{
+  patternBlink(255,0,0, 0,255,0, 500);
+}
+
+
+// ============================================================
+// Sensor incoherent — Red / Green ×2
+// ============================================================
+void led_pattern_sensor_incoherent()
+{
+  led_color(255,0,0); delay(200);
+  led_color(0,255,0); delay(200);
+  led_color(0,255,0); delay(200);
 }
