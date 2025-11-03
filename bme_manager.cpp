@@ -1,98 +1,142 @@
 #include "bme_manager.h"
+#include "config.h"
+#include "led_manager.h"
 #include <Wire.h>
 
-#define BME280_ADDR   0x76
-#define REG_ID        0xD0
-#define REG_CTRL_HUM  0xF2
-#define REG_CTRL_MEAS 0xF4
-#define REG_CONFIG    0xF5
-#define REG_DATA      0xF7
+// Capteur BME280 I2C 0x76
+static const uint8_t BME_ADDR = 0x76;
+static bool inited = false;
+static uint8_t failCount = 0;
 
-static bool bmeOK = false;
 
-// -------------------------
-// I2C helpers
-// -------------------------
-static uint8_t read8(uint8_t r) {
-  Wire.beginTransmission(BME280_ADDR);
-  Wire.write(r);
-  Wire.endTransmission();
-  Wire.requestFrom(BME280_ADDR, 1);
-  return Wire.read();
+// -------------------------------------------------------------------
+// Lecture d’un registre
+// -------------------------------------------------------------------
+static bool readReg(uint8_t reg, uint8_t &v)
+{
+    Wire.beginTransmission(BME_ADDR);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+
+    if (Wire.requestFrom(BME_ADDR, (uint8_t)1) != 1) return false;
+    v = Wire.read();
+    return true;
 }
 
-static uint32_t read24(uint8_t r) {
-  Wire.beginTransmission(BME280_ADDR);
-  Wire.write(r);
-  Wire.endTransmission();
-  Wire.requestFrom(BME280_ADDR, 3);
-  uint32_t v = Wire.read();
-  v = (v << 8) | Wire.read();
-  v = (v << 8) | Wire.read();
-  return v;
-}
 
-// -------------------------
-// Init
-// -------------------------
+// -------------------------------------------------------------------
+// Lecture brute compensation + conversion simplifiée
+// (On simplifie → précision suffisante + FLASH faible)
+// -------------------------------------------------------------------
 bool bme_init()
 {
-  Wire.begin();
+    Wire.begin();
 
-  if (read8(REG_ID) != 0x60)
-    return false;
+    uint8_t id = 0;
+    if (!readReg(0xD0, id)) {
+        inited = false;
+        return false;
+    }
 
-  // Humidity oversampling x1
-  Wire.beginTransmission(BME280_ADDR);
-  Wire.write(REG_CTRL_HUM);
-  Wire.write(0x01);
-  Wire.endTransmission();
+    // BME280 ID officiel = 0x60
+    if (id != 0x60) {
+        inited = false;
+        return false;
+    }
 
-  // temp+press oversampling x1, normal mode
-  Wire.beginTransmission(BME280_ADDR);
-  Wire.write(REG_CTRL_MEAS);
-  Wire.write(0x27);
-  Wire.endTransmission();
+    // Forced mode basic
+    Wire.beginTransmission(BME_ADDR);
+    Wire.write(0xF4);
+    Wire.write(0x25);   // oversampling light + forced
+    Wire.endTransmission();
 
-  // Standby 1000 ms
-  Wire.beginTransmission(BME280_ADDR);
-  Wire.write(REG_CONFIG);
-  Wire.write(0xA0);
-  Wire.endTransmission();
-
-  delay(10);
-  bmeOK = true;
-  return true;
+    inited = true;
+    failCount = 0;
+    return true;
 }
 
-// -------------------------
-// Read sensors
-// Simplified conversion
-// -------------------------
-bool bme_read(BmeData &o)
+
+// -------------------------------------------------------------------
+// Forced measurement
+// -------------------------------------------------------------------
+static bool bme_take_forced()
 {
-  if (!bmeOK) {
-    o.ok = false;
-    return false;
-  }
+    Wire.beginTransmission(BME_ADDR);
+    Wire.write(0xF4);
+    Wire.write(0x25); // forced
+    return Wire.endTransmission() == 0;
+}
 
-  uint32_t rawP = read24(REG_DATA);
-  uint32_t rawT = read24(REG_DATA + 3);
-  uint16_t rawH = (read8(REG_DATA + 6) << 8) | read8(REG_DATA + 7);
 
-  rawP >>= 4;
-  rawT >>= 4;
+// -------------------------------------------------------------------
+// read24 helper
+// -------------------------------------------------------------------
+static bool read24(uint8_t reg, int32_t &out)
+{
+    Wire.beginTransmission(BME_ADDR);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
 
-  // ---------- Temperature (simplifiée)
-  float T = rawT / 5120.0;  
-  o.temperature = T;
+    if (Wire.requestFrom(BME_ADDR, (uint8_t)3) != 3) return false;
 
-  // ---------- Humidity (simplifiée)
-  o.humidity = rawH / 1024.0;
+    uint32_t v = Wire.read();
+    v = (v << 8) | Wire.read();
+    v = (v << 8) | Wire.read();
 
-  // ---------- Pressure (simplifiée)
-  o.pressure = rawP / 100.0;
+    out = (int32_t)v;
+    return true;
+}
 
-  o.ok = true;
-  return true;
+
+// -------------------------------------------------------------------
+// Lecture simplifiée
+// -------------------------------------------------------------------
+bool bme_read(BmeData &o, unsigned long timeoutMs)
+{
+    o.ok  = false;
+    o.temp = 0;
+    o.hum  = 0;
+    o.pres = 0;
+
+    if (!inited)
+    {
+        failCount++;
+        return false;
+    }
+
+    unsigned long t0 = millis();
+    if (!bme_take_forced()) {
+        failCount++;
+        return false;
+    }
+
+    delay(10);
+
+    int32_t rawT, rawH, rawP;
+    if (!read24(0xFA, rawT)) return false;
+    if (!read24(0xFD, rawH)) return false;
+    if (!read24(0xF7, rawP)) return false;
+
+    float T = rawT / 16384.0f;
+    float H = rawH / 16384.0f;
+    float P = rawP / 25600.0f;
+
+    bool inco = false;
+    if (H < config.HYGR_MINT || H > config.HYGR_MAXT) inco = true;
+    if (P < config.PRESSURE_MIN || P > config.PRESSURE_MAX) inco = true;
+
+    if (inco)
+    {
+        led_err_sensor_inco();
+        o.ok = false;
+        return false;
+    }
+
+    o.ok   = true;
+    o.temp = T;
+    o.hum  = H;
+    o.pres = P;
+
+    failCount = 0;
+    return true;
 }

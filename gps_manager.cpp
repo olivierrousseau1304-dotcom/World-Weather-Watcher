@@ -1,118 +1,144 @@
 #include "gps_manager.h"
+#include <Arduino.h>
 #include <SoftwareSerial.h>
 
-static const uint8_t GPS_RX_PIN = 6;   // Air530 → TX
-static const uint8_t GPS_TX_PIN = 7;   // Air530 ← RX
+// GPS pins (Grove UART)
+static SoftwareSerial gpsSerial(6, 7); // RX,TX
 
-static SoftwareSerial gpsSerial(GPS_RX_PIN, GPS_TX_PIN);
-static bool gpsEnabled = true;
-
-void gps_set_enabled(bool en) { gpsEnabled = en; }
-bool gps_is_enabled() { return gpsEnabled; }
-
-// ------------------------------------------
-static float parseCoord(const char *s, char h)
+// Convert ddmm.mmmm + dir -> decimal
+static float nmeaToDecimal(float v, char dir)
 {
-    if (!s || !*s) return 0;
-
-    float raw = atof(s);     // ddmm.mmmm
-    int deg = (int)(raw / 100);
-    float minutes = raw - deg * 100.0f;
-    float dec = deg + minutes / 60.0f;
-
-    if (h == 'S' || h == 'W') dec = -dec;
-    return dec;
+  int deg = (int)(v / 100);
+  float mins = v - deg * 100;
+  float d = deg + mins / 60.0f;
+  if (dir == 'S' || dir == 'W') d = -d;
+  return d;
 }
 
-// ------------------------------------------
-bool gps_read(GpsData &o, unsigned long timeout_ms)
-{
-    if (!gpsEnabled) return false;
-
-    unsigned long start = millis();
-    o.fix = false;
-
-    char buf[100];
-    uint8_t i = 0;
-
-    while (millis() - start < timeout_ms)
-    {
-        if (!gpsSerial.available()) continue;
-
-        char c = gpsSerial.read();
-
-        if (c == '\n')
-        {
-            buf[i] = 0;
-            i = 0;
-
-            // Only GGA + RMC needed
-            if (strncmp(buf, "$GNGGA", 6) == 0 || strncmp(buf, "$GPGGA", 6) == 0)
-            {
-                // 1=time,2=lat,3=N,4=lon,5=E,6=quality,7=sats,8=HDOP,9=alt
-                char *p = buf;
-                char *t[12];
-                int k=0;
-
-                while (k<12 && (t[k] = strtok(p, ","))) {
-                    p = NULL;
-                    k++;
-                }
-                if (k >= 10)
-                {
-                    int fixq    = atoi(t[6]);
-                    uint8_t sats= atoi(t[7]);
-                    float alt   = atof(t[9]);
-
-                    if (fixq > 0) {
-                        o.fix  = true;
-                        o.lat  = parseCoord(t[2], t[3][0]);
-                        o.lon  = parseCoord(t[4], t[5][0]);
-                        o.sats = sats;
-                        o.alt  = alt;
-                    }
-                }
-                continue;
-            }
-
-            if (strncmp(buf, "$GNRMC", 6) == 0 || strncmp(buf, "$GPRMC", 6) == 0)
-            {
-                // 1=time,2=valid,3=lat,4=N,5=lon,6=E,7=speed(kn)
-                char *p = buf;
-                char *t[10];
-                int k=0;
-
-                while (k<10 && (t[k] = strtok(p, ","))) {
-                    p = NULL;
-                    k++;
-                }
-                if (k >= 8)
-                {
-                    if (t[2][0] == 'A')
-                    {
-                        o.fix  = true;
-                        o.lat  = parseCoord(t[3], t[4][0]);
-                        o.lon  = parseCoord(t[5], t[6][0]);
-
-                        float kn = atof(t[7]);
-                        o.speed = kn * 1.852f;   // km/h
-                    }
-                }
-                // If RMC gave fix, return now
-                if (o.fix) return true;
-            }
-        }
-        else
-        {
-            if (i < sizeof(buf)-1)
-                buf[i++] = c;
-        }
-    }
-    return o.fix;
-}
-
-// ------------------------------------------
 void gps_init()
 {
-    gpsSerial.begin(9600);
+  gpsSerial.begin(9600);
+  delay(50);
+}
+
+static bool parseGGA(const char* s, GpsData &d)
+{
+  // Ex: $GPGGA,123519,4807.038,N,01131.000,E,1,08,...,545.4,M,...
+  // idx:  0     1      2      3    4      5 6  7         9
+  char copy[100];
+  strncpy(copy, s, sizeof(copy));
+  copy[sizeof(copy)-1] = 0;
+
+  char* tok = strtok(copy, ",");
+  uint8_t idx = 0;
+  float lat=0, lon=0, alt=0;
+  char ns='N', ew='E';
+  int fix=0, sats=0;
+
+  while (tok)
+  {
+    switch (idx)
+    {
+      case 2: lat = atof(tok); break;
+      case 3: ns  = tok[0];    break;
+      case 4: lon = atof(tok); break;
+      case 5: ew  = tok[0];    break;
+      case 6: fix = atoi(tok); break;
+      case 7: sats = atoi(tok); break;
+      case 9: alt = atof(tok); break;
+    }
+    tok = strtok(nullptr, ",");
+    idx++;
+  }
+
+  if (fix > 0)
+  {
+    d.fix  = true;
+    d.lat  = nmeaToDecimal(lat, ns);
+    d.lon  = nmeaToDecimal(lon, ew);
+    d.alt  = alt;
+    d.sats = (uint8_t)sats;
+    return true;
+  }
+
+  return false;
+}
+
+static bool parseRMC(const char* s, GpsData &d)
+{
+  // Ex: $GPRMC,hhmmss,A,lat,NS,lon,EW,speed...
+  char copy[100];
+  strncpy(copy, s, sizeof(copy));
+  copy[sizeof(copy)-1] = 0;
+
+  char* tok = strtok(copy, ",");
+  uint8_t idx = 0;
+  char A='V';
+  float lat=0, lon=0, sp=0;
+  char ns='N', ew='E';
+
+  while (tok)
+  {
+    switch (idx)
+    {
+      case 2: A   = tok[0]; break;
+      case 3: lat = atof(tok); break;
+      case 4: ns  = tok[0]; break;
+      case 5: lon = atof(tok); break;
+      case 6: ew  = tok[0]; break;
+      case 7: sp  = atof(tok); break;   // knots
+    }
+    tok = strtok(nullptr, ",");
+    idx++;
+  }
+
+  if (A != 'A') return false; // active fix
+
+  d.fix   = true;
+  d.lat   = nmeaToDecimal(lat, ns);
+  d.lon   = nmeaToDecimal(lon, ew);
+  d.speed = sp * 1.852f;  // knots -> km/h
+  return true;
+}
+
+bool gps_read(GpsData &out, unsigned long timeoutMs)
+{
+  out.fix = false;
+  out.lat = out.lon = 0;
+  out.alt = 0;
+  out.sats = 0;
+  out.speed = 0;
+
+  unsigned long start = millis();
+  char buf[100];
+  uint8_t pos = 0;
+
+  while (millis() - start < timeoutMs)
+  {
+    if (gpsSerial.available())
+    {
+      char c = gpsSerial.read();
+      if (c == '\n' || c == '\r')
+      {
+        buf[pos] = 0;
+        if (pos > 6)
+        {
+          if (!out.fix && strncmp(buf, "$GPGGA", 6)==0)
+            parseGGA(buf, out);
+
+          if (!out.fix && strncmp(buf, "$GPRMC", 6)==0)
+            parseRMC(buf, out);
+        }
+        pos = 0;
+
+        if (out.fix) return true;
+      }
+      else
+      {
+        if (pos < sizeof(buf)-1)
+          buf[pos++] = c;
+      }
+    }
+  }
+  return false;
 }

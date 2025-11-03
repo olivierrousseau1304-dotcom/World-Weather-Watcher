@@ -2,25 +2,23 @@
 #define LED_MANAGER_H
 
 #include <Arduino.h>
-#include <ChainableLED.h>
 
-// === P9813 LEDs ===
-extern ChainableLED leds;
+// === Couleurs fixes (modes) ===
+void led_mode_standard();     // Vert
+void led_mode_config();       // Jaune
+void led_mode_economy();      // Bleu
+void led_mode_maintenance();  // Orange profond
 
-// === Init ===
-void led_init();
-
-// === Fixed colors ===
-void led_color(uint8_t r, uint8_t g, uint8_t b);
+// Éteindre
 void led_off();
 
-// === Patterns ===
-void led_pattern_sd_full();           // Rouge <-> Blanc (1Hz)
-void led_pattern_sd_write_error();    // Rouge <-> Blanc (Blanc x2)
-
-void led_pattern_rtc_error();         // Rouge <-> Bleu
-void led_pattern_gps_error();         // Rouge <-> Jaune
-void led_pattern_sensor_error();      // Rouge <-> Vert
-void led_pattern_sensor_incoherent(); // Rouge <-> Vert (Vert x2)
+// === Motifs d'erreur (clignotants) ===
+// 1 Hz = 500/500 ms
+void led_err_rtc();           // Rouge ↔ Bleu
+void led_err_gps();           // Rouge ↔ Jaune
+void led_err_sensor();        // Rouge ↔ Vert
+void led_err_sensor_inco();   // Rouge ↔ Vert (vert 2x)
+void led_err_sd_full();       // Rouge ↔ Blanc
+void led_err_sd_write();      // Rouge ↔ Blanc (blanc 2x)
 
 #endif

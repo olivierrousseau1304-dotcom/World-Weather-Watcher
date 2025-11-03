@@ -1,118 +1,110 @@
 #include "rtc_manager.h"
-#include <Wire.h>
+#include <RTClib.h>
+#include <string.h>
 
-#define DS3231_ADDR 0x68
+static RTC_DS3231 rtc;
+static bool rtc_ok = false;
 
-static bool rtcOk = false;
+// Stock DOW (3 chars + '\0')
+static char dowStore[4] = "MON";
 
-// ------------------------------
-// BCD conversion
-// ------------------------------
-static uint8_t bcdToDec(uint8_t v)
+bool rtc_init()
 {
-    return (v >> 4) * 10 + (v & 0x0F);
-}
+    if (!rtc.begin()) {
+        rtc_ok = false;
+        return false;
+    }
 
-// ------------------------------
-// Init
-// ------------------------------
-void rtc_init()
-{
-    Wire.begin();
-    Wire.beginTransmission(DS3231_ADDR);
-    rtcOk = (Wire.endTransmission() == 0);
+    if (rtc.lostPower()) {
+        rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    }
+
+    rtc_ok = true;
+    return true;
 }
 
 bool rtc_is_available()
 {
-    return rtcOk;
+    return rtc_ok;
 }
 
-// ------------------------------
-// Core read (internal)
-// ------------------------------
-static bool readAll(
-    uint8_t &sec,
-    uint8_t &minu,
-    uint8_t &hour,
-    uint8_t &day,
-    uint8_t &month,
-    uint8_t &year
-)
-{
-    if (!rtcOk) return false;
-
-    Wire.beginTransmission(DS3231_ADDR);
-    Wire.write(0x00);
-    Wire.endTransmission();
-
-    Wire.requestFrom(DS3231_ADDR, 7);
-    if (Wire.available() < 7) return false;
-
-    sec   = bcdToDec(Wire.read() & 0x7F);
-    minu  = bcdToDec(Wire.read());
-    hour  = bcdToDec(Wire.read());
-    Wire.read(); // ignore day of week
-    day   = bcdToDec(Wire.read());
-    month = bcdToDec(Wire.read());
-    year  = bcdToDec(Wire.read()); // 0–99 => 20xx
-
-    return true;
-}
-
-// ------------------------------
-// YYYY-MM-DD (String)
-// ------------------------------
-String rtc_get_date_str()
-{
-    uint8_t s,m,h,day,month,year;
-    if (!readAll(s,m,h,day,month,year))
-        return String("0000-00-00");
-
-    char buf[11];
-    snprintf(buf, sizeof(buf), "20%02u-%02u-%02u", year, month, day);
-    return String(buf);
-}
-
-// ------------------------------
-// HH:MM:SS (String)
-// ------------------------------
-String rtc_get_time_str()
-{
-    uint8_t s,m,h,day,month,year;
-    if (!readAll(s,m,h,day,month,year))
-        return String("00:00:00");
-
-    char buf[9];
-    snprintf(buf, sizeof(buf), "%02u:%02u:%02u", h, m, s);
-    return String(buf);
-}
-
-// ------------------------------
-// YYMMDD (C-string)
-// ------------------------------
+// ---------------------------------------------------------
+// GET DATE → "YYMMDD"
+// ---------------------------------------------------------
 void rtc_get_date_YYMMDD(char* out6)
 {
-    uint8_t s,m,h,day,month,year;
-    if (!readAll(s,m,h,day,month,year)) {
+    if (!rtc_ok) {
         strcpy(out6, "000000");
         return;
     }
 
-    // year is 0–99 → keep only last 2 digits
-    snprintf(out6, 7, "%02u%02u%02u", year, month, day);
+    DateTime now = rtc.now();
+    snprintf(out6, 7, "%02d%02d%02d",
+        now.year() % 100,
+        now.month(),
+        now.day());
 }
 
-// ------------------------------
-// HHMMSS (C-string)
-// ------------------------------
+// ---------------------------------------------------------
+// GET TIME → "HHMMSS"
+// ---------------------------------------------------------
 void rtc_get_time_HHMMSS(char* out6)
 {
-    uint8_t s,m,h,day,month,year;
-    if (!readAll(s,m,h,day,month,year)) {
+    if (!rtc_ok) {
         strcpy(out6, "000000");
         return;
     }
 
-    snprintf(out6, 7, "%02u%02u%02u", h, m, s);
+    DateTime now = rtc.now();
+    snprintf(out6, 7, "%02d%02d%02d",
+        now.hour(),
+        now.minute(),
+        now.second());
+}
+
+// ---------------------------------------------------------
+// SET TIME → CLOCK HH:MM:SS
+// ---------------------------------------------------------
+void rtc_set_time(uint8_t hh, uint8_t mm, uint8_t ss)
+{
+    if (!rtc_ok) return;
+
+    DateTime now = rtc.now();
+    rtc.adjust(DateTime(
+        now.year(),
+        now.month(),
+        now.day(),
+        hh, mm, ss
+    ));
+}
+
+// ---------------------------------------------------------
+// SET DATE → DATE MM,DD,YYYY
+// ---------------------------------------------------------
+void rtc_set_date(uint8_t month, uint8_t day, uint16_t year)
+{
+    if (!rtc_ok) return;
+
+    DateTime now = rtc.now();
+    rtc.adjust(DateTime(
+        year,
+        month,
+        day,
+        now.hour(),
+        now.minute(),
+        now.second()
+    ));
+}
+
+// ---------------------------------------------------------
+// SET DAY → DAY MON / TUE / ...
+// ---------------------------------------------------------
+void rtc_set_day(const char* dow3)
+{
+    if (!dow3) return;
+
+    dowStore[0] = dow3[0];
+    dowStore[1] = dow3[1];
+    dowStore[2] = dow3[2];
+    dowStore[3] = 0;
 }

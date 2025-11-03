@@ -1,75 +1,97 @@
 #include "button_manager.h"
+#include <Arduino.h>
 
-// Rouge = D6, Bleu = D7
-static const uint8_t PIN_RED  = 6;
-static const uint8_t PIN_BLUE = 7;
+// Long press (ms)
+#define LONG_PRESS_MS   5000
 
-static unsigned long tRed = 0;
-static unsigned long tBlue = 0;
+static uint8_t  prevMode = 0;
+static unsigned long redPressStart = 0;
+static unsigned long greenPressStart = 0;
+static bool redWasPressed = false;
+static bool greenWasPressed = false;
 
-static bool redWasDown  = false;
-static bool blueWasDown = false;
-
-static const unsigned long LONG_MS = 5000;
-
-void button_init()
+void buttons_init()
 {
-    pinMode(PIN_RED, INPUT_PULLUP);
-    pinMode(PIN_BLUE, INPUT_PULLUP);
+    pinMode(BUTTON_GREEN_PIN, INPUT_PULLUP);
+    pinMode(BUTTON_RED_PIN,   INPUT_PULLUP);
 }
 
-bool button_red_pressed()
+// return code:
+// 0 = rien
+// 1 = demande passage ÉCO
+// 2 = demande passage MAINTENANCE
+// 3 = demande sortie MAINTENANCE
+// 4 = demande passage STANDARD
+uint8_t buttons_update(uint8_t currentMode)
 {
-    bool down = (digitalRead(PIN_RED) == LOW);
+    bool redPressed   = (digitalRead(BUTTON_RED_PIN)   == LOW);
+    bool greenPressed = (digitalRead(BUTTON_GREEN_PIN) == LOW);
+    unsigned long now = millis();
 
-    if (down && !redWasDown)
+    // =========== GREEN long press -> MODE ÉCO ===========
+    if (greenPressed)
     {
-        redWasDown = true;
-        tRed = millis();
-        return true;        // appui court détecté immédiatement
+        if (!greenWasPressed)
+        {
+            greenPressStart = now;
+            greenWasPressed = true;
+        }
+        else
+        {
+            if ((now - greenPressStart) >= LONG_PRESS_MS)
+            {
+                // Pour éviter répétitions
+                greenWasPressed = false;
+
+                // Depuis STANDARD → ECO
+                if (currentMode == 0) return 1;   // ECO
+            }
+        }
     }
-    if (!down)
-        redWasDown = false;
-
-    return false;
-}
-
-bool button_blue_pressed()
-{
-    bool down = (digitalRead(PIN_BLUE) == LOW);
-
-    if (down && !blueWasDown)
+    else
     {
-        blueWasDown = true;
-        tBlue = millis();
-        return true;        // appui court
+        greenWasPressed = false;
     }
-    if (!down)
-        blueWasDown = false;
 
-    return false;
-}
-
-bool button_red_long()
-{
-    bool down = (digitalRead(PIN_RED) == LOW);
-
-    if (down && (millis() - tRed >= LONG_MS) && redWasDown)
+    // =========== RED long press -> Maintenance / Quit ===========
+    if (redPressed)
     {
-        redWasDown = false;
-        return true;
+        if (!redWasPressed)
+        {
+            redPressStart = now;
+            redWasPressed = true;
+        }
+        else
+        {
+            if ((now - redPressStart) >= LONG_PRESS_MS)
+            {
+                redWasPressed = false;
+
+                // STANDARD → MAINT
+                if (currentMode == 0)
+                {
+                    prevMode = currentMode;
+                    return 2;   // request MAINT
+                }
+
+                // ECO → STANDARD
+                if (currentMode == 1)
+                {
+                    return 4;   // request STANDARD
+                }
+
+                // MAINT → previous
+                if (currentMode == 2)
+                {
+                    return 3;   // exit MAINT
+                }
+            }
+        }
     }
-    return false;
-}
-
-bool button_blue_long()
-{
-    bool down = (digitalRead(PIN_BLUE) == LOW);
-
-    if (down && (millis() - tBlue >= LONG_MS) && blueWasDown)
+    else
     {
-        blueWasDown = false;
-        return true;
+        redWasPressed = false;
     }
-    return false;
+
+    return 0;
 }

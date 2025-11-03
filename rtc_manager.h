@@ -1,25 +1,16 @@
 #ifndef RTC_MANAGER_H
 #define RTC_MANAGER_H
 
-#include <Arduino.h>
+#include <stdint.h>
 
-// ============================
-// API
-// ============================
-void rtc_init();
+bool rtc_init();
 bool rtc_is_available();
 
-// "YYYY-MM-DD"
-String rtc_get_date_str();
+void rtc_get_date_YYMMDD(char* out6);   // "YYMMDD" + '\0'
+void rtc_get_time_HHMMSS(char* out6);   // "HHMMSS" + '\0'
 
-// "HH:MM:SS"
-String rtc_get_time_str();
-
-// === Optimised (no String) ===
-// Fill buffer: "YYMMDD"   => must be >= 7 bytes
-void rtc_get_date_YYMMDD(char* out6);
-
-// Fill buffer: "HHMMSS"   => must be >= 7 bytes
-void rtc_get_time_HHMMSS(char* out6);
+void rtc_set_time(uint8_t hh, uint8_t mm, uint8_t ss);
+void rtc_set_date(uint8_t month, uint8_t day, uint16_t year);
+void rtc_set_day(const char* dow3);
 
 #endif

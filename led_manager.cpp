@@ -1,99 +1,70 @@
 #include "led_manager.h"
+#include <ChainableLED.h>
 
-// === P9813 LED setup ===
-// DI = 8, CI = 9 — 1 LED
-ChainableLED leds(8, 9, 1);
+// P9813 — DI = 8, CI = 9, 1 LED
+static ChainableLED leds(8, 9, 1);
 
-
-// ============================================================
-// BASE
-// ============================================================
-void led_init()
-{
-  // Force frame reset
-  leds.setColorRGB(0, 0, 0, 0);   // r,g,b = 0
-  delay(5);
-
-  // Envoie une seconde fois pour être sûr
-  leds.setColorRGB(0, 0, 0, 0);
-  delay(5);
-}
-
-void led_color(uint8_t r, uint8_t g, uint8_t b)
+// ========= BAS NIVEAU COULEUR =========
+static void setRGB(uint8_t r, uint8_t g, uint8_t b)
 {
   leds.setColorRGB(0, r, g, b);
 }
 
-void led_off()
+// ========= MODES (fixe) =========
+void led_mode_standard()     { setRGB(0,   255,   0  ); }   // vert
+void led_mode_config()       { setRGB(255, 255,   0  ); }   // jaune
+void led_mode_economy()      { setRGB(0,     0, 255 ); }   // bleu
+void led_mode_maintenance()  { setRGB(255,  80,   0 ); }   // orange profond
+
+void led_off()               { setRGB(0,0,0); }
+
+// ========= BASE CLIGNOTEMENT =========
+// d1 = ms COLOR1, d2 = ms COLOR2
+static void blink2(uint8_t r1,uint8_t g1,uint8_t b1,
+                   uint8_t r2,uint8_t g2,uint8_t b2,
+                   uint16_t d1,uint16_t d2)
 {
-  led_color(0,0,0);
+  setRGB(r1,g1,b1);
+  delay(d1);
+  setRGB(r2,g2,b2);
+  delay(d2);
 }
 
+// ========= MOTIFS ERREURS (CDC) =========
 
-// ============================================================
-// HELPER
-// ============================================================
-static void patternBlink(uint8_t r1,uint8_t g1,uint8_t b1,
-                         uint8_t r2,uint8_t g2,uint8_t b2,
-                         uint16_t delayMs)
+// 1 Hz = 500/500 ms
+// RTC = Rouge ↔ Bleu
+void led_err_rtc()
 {
-  led_color(r1,g1,b1);
-  delay(delayMs);
-  led_color(r2,g2,b2);
-  delay(delayMs);
+  blink2(255,0,0,   0,0,255,   500,500);
 }
 
-
-// ============================================================
-// SD patterns
-// ============================================================
-
-void led_pattern_sd_full()
+// GPS = Rouge ↔ Jaune
+void led_err_gps()
 {
-  patternBlink(255,0,0, 255,255,255, 500);
+  blink2(255,0,0,   255,255,0, 500,500);
 }
 
-void led_pattern_sd_write_error()
+// Capteur = Rouge ↔ Vert
+void led_err_sensor()
 {
-  led_color(255,0,0);     delay(300);
-  led_color(255,255,255); delay(200);
-  led_color(255,255,255); delay(200);
+  blink2(255,0,0,   0,255,0,   500,500);
 }
 
-
-// ============================================================
-// RTC error — Red/Blue
-// ============================================================
-void led_pattern_rtc_error()
+// Capteur incohérent = Rouge ↔ Vert (vert plus long)
+void led_err_sensor_inco()
 {
-  patternBlink(255,0,0, 0,0,255, 500);
+  blink2(255,0,0,   0,255,0,   500,1000);
 }
 
-
-// ============================================================
-// GPS error — Red/Yellow
-// ============================================================
-void led_pattern_gps_error()
+// SD pleine = Rouge ↔ Blanc
+void led_err_sd_full()
 {
-  patternBlink(255,0,0, 255,255,0, 500);
+  blink2(255,0,0,   255,255,255, 500,500);
 }
 
-
-// ============================================================
-// Sensor error — Red/Green
-// ============================================================
-void led_pattern_sensor_error()
+// SD write error = Rouge ↔ Blanc (blanc 2× plus long)
+void led_err_sd_write()
 {
-  patternBlink(255,0,0, 0,255,0, 500);
-}
-
-
-// ============================================================
-// Sensor incoherent — Red / Green ×2
-// ============================================================
-void led_pattern_sensor_incoherent()
-{
-  led_color(255,0,0); delay(200);
-  led_color(0,255,0); delay(200);
-  led_color(0,255,0); delay(200);
+  blink2(255,0,0,   255,255,255, 500,1000);
 }

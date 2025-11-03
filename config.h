@@ -1,61 +1,48 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-#include <Arduino.h>
+#include <stdint.h>
+#include <EEPROM.h>
 
-// =====================================================
-// STRUCTURE DE CONFIG
-// =====================================================
+// ==========================
+// CONFIG STRUCT
+// ==========================
 struct Config {
+    // Core
+    uint16_t LOG_INTERVALL;   // minutes
+    uint16_t FILE_MAX_SIZE;   // bytes
+    uint8_t  TIMEOUT;         // s
+    uint8_t  GPS_TIMEOUT;     // s
+    uint8_t  GPS;             // 0/1
 
-  // Base
-  int LOG_INTERVALL;     // minutes
-  int TIMEOUT;           // sec read sensors
-  int FILE_MAX_SIZE;     // bytes
-  int GPS;               // enable GPS
-  int GPS_TIMEOUT;       // sec read GPS
+    // ---- Light / Luminosity ----
+    uint8_t  LUMIN;           // 0/1 activation
+    uint16_t LUMIN_LOW;       // 0–1023
+    uint16_t LUMIN_HIGH;      // 0–1023
 
-  // Sensors enable
-  int LUMIN;             // enable luminosity
-  int TEMP_AIR;          // enable temperature
-  int HYGR;              // enable humidity
-  int PRESSURE;          // enable pressure
+    // ---- Temperature ----
+    uint8_t  TEMP_AIR;        // 0/1
+    int16_t  MIN_TEMP_AIR;    // -40 to 85
+    int16_t  MAX_TEMP_AIR;    // -40 to 85
 
-  // Lumi bounds
-  int LUMIN_LOW;
-  int LUMIN_HIGH;
+    // ---- Hygrometry ----
+    uint8_t  HYGR;            // 0/1
+    int16_t  HYGR_MINT;       // -40 to 85
+    int16_t  HYGR_MAXT;       // -40 to 85
 
-  // temp bounds
-  int MIN_TEMP_AIR;
-  int MAX_TEMP_AIR;
-
-  // humidity bounds
-  int HYGR_MINT;
-  int HYGR_MAXT;
-
-  // pressure bounds
-  int PRESSURE_MIN;
-  int PRESSURE_MAX;
+    // ---- Pressure ----
+    uint8_t  PRESSURE;        // 0/1
+    uint16_t PRESSURE_MIN;    // 300–1100
+    uint16_t PRESSURE_MAX;    // 300–1100
 };
 
-// =====================================================
-// API
-// =====================================================
 extern Config config;
 
-// initialisation → load EEPROM
-void config_init();
-
-// impression des paramètres
-void config_print_all();
-
-// sauve en EEPROM
+// Load/Save
+void config_load();
 void config_save();
 
-// remet valeurs défaut
+// Reset all to defaults
 void config_reset_defaults();
-
-// setter SET <key> <value>
-bool config_set_param(const String &key, int value);
 
 #endif

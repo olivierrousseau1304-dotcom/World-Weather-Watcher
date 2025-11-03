@@ -3,18 +3,20 @@
 
 #include <Arduino.h>
 
+// Données GPS utiles CDC
 struct GpsData {
-  bool  fix;
-  float lat;
-  float lon;
-  float alt;
+  bool   fix;
+  float  lat;
+  float  lon;
+  float  alt;
   uint8_t sats;
-  float speed;
+  float  speed;
 };
 
+// Init module
 void gps_init();
-bool gps_read(GpsData &out, unsigned long timeout_ms);
-void gps_set_enabled(bool en);
-bool gps_is_enabled();
+
+// Lecture avec timeout (ms)
+bool gps_read(GpsData &out, unsigned long timeoutMs);
 
 #endif

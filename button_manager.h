@@ -3,12 +3,20 @@
 
 #include <Arduino.h>
 
-void button_init();
+// Pins
+#define BUTTON_GREEN_PIN   3
+#define BUTTON_RED_PIN     2
 
-bool button_red_pressed();
-bool button_blue_pressed();
+// À appeler dans loop()
+// Retourne :
+//  0 = aucun changement
+//  1 = demande passage ÉCO
+//  2 = demande passage MAINTENANCE
+//  3 = demande sortie MAINTENANCE
+//  4 = demande passage STANDARD
+uint8_t buttons_update(uint8_t currentMode);
 
-bool button_red_long();
-bool button_blue_long();
+// Pour init
+void buttons_init();
 
 #endif
